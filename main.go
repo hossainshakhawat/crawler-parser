@@ -40,17 +40,17 @@ import (
 
 const (
 	consumerGroup = "crawler-parsers"
-	redisSeenKey  = "webcrawler:seen_urls"
+	redisSeenKey  = "webcrawler:parsed_urls"
 )
 
 func main() {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 
 	kafkaBroker := flag.String("kafka", "localhost:9092", "Kafka broker address")
-	redisAddr   := flag.String("redis", "localhost:6379", "Redis address for URL dedup")
-	dsn         := flag.String("dsn", "root:@tcp(127.0.0.1:3306)/webcrawler?parseTime=true", "MySQL DSN")
-	maxDepth    := flag.Int("max-depth", 3, "Maximum crawl depth")
-	numWorkers  := flag.Int("workers", 8, "Parallel parse goroutines")
+	redisAddr := flag.String("redis", "localhost:6379", "Redis address for URL dedup")
+	dsn := flag.String("dsn", "root:@tcp(127.0.0.1:3306)/webcrawler?parseTime=true", "MySQL DSN")
+	maxDepth := flag.Int("max-depth", 3, "Maximum crawl depth")
+	numWorkers := flag.Int("workers", 8, "Parallel parse goroutines")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
