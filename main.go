@@ -5,28 +5,14 @@
 //
 // Configuration is loaded in this priority order (highest wins):
 //
-//  1. CLI flags
-//  2. Environment variables  (prefix PARSER_, e.g. PARSER_KAFKA_BROKER)
-//  3. config.yml             (must be in the working directory)
-//  4. Built-in defaults
-//
-// Usage:
-//
-//	crawler-parser [flags]
-//
-// Flags:
-//
-//	-kafka      Kafka broker address (default localhost:9092)
-//	-redis      Redis address for dedup (default localhost:6379)
-//	-dsn        MySQL DSN (default root:@tcp(127.0.0.1:3306)/webcrawler?parseTime=true)
-//	-max-depth  Maximum crawl depth; links at this depth are not republished (default 3)
-//	-workers    Parallel parse goroutines (default 8)
+//  1. Environment variables  (prefix PARSER_, e.g. PARSER_KAFKA_BROKER)
+//  2. config.yml             (must be in the working directory)
+//  3. Built-in defaults
 package main
 
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -60,12 +46,6 @@ func loadConfig() config {
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".")
 
-	viper.SetDefault("kafka_broker", "localhost:9092")
-	viper.SetDefault("redis_addr", "localhost:6379")
-	viper.SetDefault("dsn", "root:@tcp(127.0.0.1:3306)/webcrawler?parseTime=true")
-	viper.SetDefault("max_depth", 3)
-	viper.SetDefault("workers", 8)
-
 	viper.SetEnvPrefix("PARSER")
 	viper.AutomaticEnv()
 
@@ -75,21 +55,12 @@ func loadConfig() config {
 		}
 	}
 
-	// Flags override env vars and config.yml; defaults come from Viper
-	// so env vars and config.yml flow through when flags are not set.
-	kafka := flag.String("kafka", viper.GetString("kafka_broker"), "Kafka broker address")
-	redisAddr := flag.String("redis", viper.GetString("redis_addr"), "Redis address for URL dedup")
-	dsn := flag.String("dsn", viper.GetString("dsn"), "MySQL DSN")
-	maxDepth := flag.Int("max-depth", viper.GetInt("max_depth"), "Maximum crawl depth")
-	workers := flag.Int("workers", viper.GetInt("workers"), "Parallel parse goroutines")
-	flag.Parse()
-
 	return config{
-		kafkaBroker: *kafka,
-		redisAddr:   *redisAddr,
-		dsn:         *dsn,
-		maxDepth:    *maxDepth,
-		numWorkers:  *workers,
+		kafkaBroker: viper.GetString("kafka_broker"),
+		redisAddr:   viper.GetString("redis_addr"),
+		dsn:         viper.GetString("dsn"),
+		maxDepth:    viper.GetInt("max_depth"),
+		numWorkers:  viper.GetInt("workers"),
 	}
 }
 
