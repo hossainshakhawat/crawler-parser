@@ -1,11 +1,11 @@
-module github.com/shakhawathossain/crawler-parser
+module github.com/hossainshakhawat/crawler-parser
 
 go 1.25.0
 
 require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/redis/go-redis/v9 v9.18.0
-	github.com/twmb/franz-go v1.21.0
+	github.com/twmb/franz-go v1.20.7
 	golang.org/x/net v0.53.0
 )
 

@@ -17,26 +17,20 @@
 package main
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"flag"
-	"io"
 	"log"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
+	"github.com/hossainshakhawat/crawler-parser/events"
+	"github.com/hossainshakhawat/crawler-parser/internal/kafkaconn"
+	"github.com/hossainshakhawat/crawler-parser/internal/redisconn"
+	"github.com/hossainshakhawat/crawler-parser/internal/store"
 	"github.com/redis/go-redis/v9"
-	"github.com/shakhawathossain/crawler-parser/events"
-	"github.com/shakhawathossain/crawler-parser/internal/canonicalizer"
-	"github.com/shakhawathossain/crawler-parser/internal/kafkaconn"
-	"github.com/shakhawathossain/crawler-parser/internal/parser"
-	"github.com/shakhawathossain/crawler-parser/internal/redisconn"
-	"github.com/shakhawathossain/crawler-parser/internal/store"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -45,51 +39,77 @@ const (
 	redisSeenKey  = "webcrawler:parsed_urls"
 )
 
+type config struct {
+	kafkaBroker string
+	redisAddr   string
+	dsn         string
+	maxDepth    int
+	numWorkers  int
+}
+
+func parseFlags() config {
+	var cfg config
+	flag.StringVar(&cfg.kafkaBroker, "kafka", "localhost:9092", "Kafka broker address")
+	flag.StringVar(&cfg.redisAddr, "redis", "localhost:6379", "Redis address for URL dedup")
+	flag.StringVar(&cfg.dsn, "dsn", "root:@tcp(127.0.0.1:3306)/webcrawler?parseTime=true", "MySQL DSN")
+	flag.IntVar(&cfg.maxDepth, "max-depth", 3, "Maximum crawl depth")
+	flag.IntVar(&cfg.numWorkers, "workers", 8, "Parallel parse goroutines")
+	flag.Parse()
+	return cfg
+}
+
+func listenForShutdown(cancel context.CancelFunc) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	go func() { <-sigs; log.Println("shutting down"); cancel() }()
+}
+
 func main() {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 
-	kafkaBroker := flag.String("kafka", "localhost:9092", "Kafka broker address")
-	redisAddr := flag.String("redis", "localhost:6379", "Redis address for URL dedup")
-	dsn := flag.String("dsn", "root:@tcp(127.0.0.1:3306)/webcrawler?parseTime=true", "MySQL DSN")
-	maxDepth := flag.Int("max-depth", 3, "Maximum crawl depth")
-	numWorkers := flag.Int("workers", 8, "Parallel parse goroutines")
-	flag.Parse()
+	cfg := parseFlags()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	go func() { <-sigs; log.Println("shutting down"); cancel() }()
+	listenForShutdown(cancel)
 
-	// ── Redis for dedup ───────────────────────────────────────────────────────
-	rdb, err := redisconn.New(ctx, *redisAddr)
+	redisClient, err := redisconn.New(ctx, cfg.redisAddr)
 	if err != nil {
 		log.Fatalf("redis: %v", err)
 	}
-	defer rdb.Close()
+	defer redisClient.Close()
 
-	// ── MySQL metadata store ──────────────────────────────────────────────────
-	meta, err := store.NewMetadataStore(*dsn)
+	metaStore, err := store.NewMetadataStore(cfg.dsn)
 	if err != nil {
 		log.Fatalf("metadata store: %v", err)
 	}
-	defer meta.Close()
+	defer metaStore.Close()
 
-	// ── Kafka consumer + producer ─────────────────────────────────────────────
-	cl, err := kafkaconn.New(*kafkaBroker, consumerGroup)
+	kafkaClient, err := kafkaconn.New(cfg.kafkaBroker, consumerGroup)
 	if err != nil {
 		log.Fatalf("kafka: %v", err)
 	}
-	defer cl.Close()
-
-	sem := make(chan struct{}, *numWorkers)
+	defer kafkaClient.Close()
 
 	log.Printf("crawler-parser started: group=%s max-depth=%d workers=%d",
-		consumerGroup, *maxDepth, *numWorkers)
+		consumerGroup, cfg.maxDepth, cfg.numWorkers)
+
+	run(ctx, kafkaClient, redisClient, metaStore, cfg.maxDepth, cfg.numWorkers)
+}
+
+func run(
+	ctx context.Context,
+	kafkaClient *kgo.Client,
+	redisClient *redis.Client,
+	metaStore *store.MetadataStore,
+	maxDepth int,
+	numWorkers int,
+) {
+	semaphore := make(chan struct{}, numWorkers)
 
 	for {
-		fetches := cl.PollFetches(ctx)
+		fetches := kafkaClient.PollFetches(ctx)
 		if ctx.Err() != nil {
 			break
 		}
@@ -101,110 +121,23 @@ func main() {
 		}
 
 		var wg sync.WaitGroup
-		fetches.EachRecord(func(r *kgo.Record) {
+		fetches.EachRecord(func(record *kgo.Record) {
 			var page events.CrawledPage
-			if err := json.Unmarshal(r.Value, &page); err != nil {
+			if err := json.Unmarshal(record.Value, &page); err != nil {
 				log.Printf("unmarshal: %v", err)
 				return
 			}
-			sem <- struct{}{}
+			semaphore <- struct{}{}
 			wg.Add(1)
 			go func(page events.CrawledPage) {
-				defer func() { <-sem; wg.Done() }()
-				processPage(ctx, page, cl, rdb, meta, *maxDepth)
+				defer func() { <-semaphore; wg.Done() }()
+				processPage(ctx, page, kafkaClient, redisClient, metaStore, maxDepth)
 			}(page)
 		})
 		wg.Wait()
 
-		if err := cl.CommitUncommittedOffsets(ctx); err != nil {
+		if err := kafkaClient.CommitUncommittedOffsets(ctx); err != nil {
 			log.Printf("commit offsets: %v", err)
 		}
 	}
-}
-
-func processPage(
-	ctx context.Context,
-	page events.CrawledPage,
-	cl *kgo.Client,
-	rdb *redis.Client,
-	meta *store.MetadataStore,
-	maxDepth int,
-) {
-	// ① Decompress body
-	body, err := gzipDecompress(page.Body)
-	if err != nil {
-		// Fall back to treating body as raw HTML
-		body = page.Body
-	}
-
-	// ② Parse HTML
-	parsed := parser.Parse(body)
-
-	// ③ Store metadata in MySQL
-	urlHash := store.HashURL(page.FinalURL)
-	m := &store.URLMeta{
-		URLHash:       urlHash,
-		CanonicalURL:  page.FinalURL,
-		Host:          store.HostOf(page.FinalURL),
-		Status:        store.StatusParsed,
-		HTTPStatus:    page.HTTPStatus,
-		LastCrawledAt: page.CrawledAt,
-		ContentHash:   store.ContentHash(body),
-		Title:         parsed.Title,
-	}
-	if err := meta.Upsert(m); err != nil {
-		log.Printf("[store err] %s — %v", page.FinalURL, err)
-	}
-
-	log.Printf("[parsed] depth=%-2d  %-55s  %q  links=%d",
-		page.Depth, page.FinalURL, parsed.Title, len(parsed.Links))
-
-	// ④ If we're at max depth, don't publish more links
-	if page.Depth >= maxDepth {
-		return
-	}
-
-	// ⑤ Canonicalize, dedup, and republish each link to discovered-urls
-	for _, link := range parsed.Links {
-		norm, err := canonicalizer.Normalize(link, page.FinalURL)
-		if err != nil || norm == "" {
-			continue
-		}
-
-		// Redis SADD: returns 1 if new, 0 if already in the set
-		added, err := rdb.SAdd(ctx, redisSeenKey, norm).Result()
-		if err != nil || added == 0 {
-			continue // already seen
-		}
-
-		ev := events.DiscoveredURL{
-			URL:        norm,
-			Depth:      page.Depth + 1,
-			SourceURL:  page.FinalURL,
-			EnqueuedAt: time.Now().UTC(),
-		}
-		val, err := json.Marshal(ev)
-		if err != nil {
-			continue
-		}
-		rec := &kgo.Record{
-			Topic: events.TopicDiscovered,
-			Key:   []byte(norm),
-			Value: val,
-		}
-		if err := cl.ProduceSync(ctx, rec).FirstErr(); err != nil {
-			if ctx.Err() == nil {
-				log.Printf("[kafka] publish %s: %v", norm, err)
-			}
-		}
-	}
-}
-
-func gzipDecompress(data []byte) ([]byte, error) {
-	r, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-	return io.ReadAll(r)
 }
