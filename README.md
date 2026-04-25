@@ -2,14 +2,22 @@
 
 Consumes crawled HTML pages from the `crawled-urls` Kafka topic, parses each page to extract the title and outbound links, stores page metadata in MySQL, deduplicates newly found links via Redis, and republishes them to the `discovered-urls` topic to be fetched by `crawler-worker`.
 
+The pipeline is seeded by [`crawler-seed`](../crawler-seed), which exposes a `POST /seed` HTTP API to inject starting URLs into `discovered-urls`.
+
 ## Architecture overview
 
 ```
-[crawled-urls]  ──►  crawler-parser  ──►  MySQL (url_metadata)
-                           │
-                           ├──►  Redis (dedup: webcrawler:parsed_urls)
-                           │
-                           └──►  [discovered-urls]  (new links, depth + 1)
+POST /seed
+    │
+    ▼
+crawler-seed (HTTP server)
+    │
+    ▼
+[discovered-urls]  ──►  crawler-worker  ──►  [crawled-urls]  ──►  crawler-parser  ──►  MySQL (url_metadata)
+                                                                          │
+                                                                          ├──►  Redis (dedup: webcrawler:parsed_urls)
+                                                                          │
+                                                                          └──►  [discovered-urls]  (new links, depth + 1)
 ```
 
 Multiple instances can run in parallel under the same Kafka consumer group (`crawler-parsers`). Kafka distributes `crawled-urls` partitions across all active instances automatically.
