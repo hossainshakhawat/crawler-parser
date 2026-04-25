@@ -33,7 +33,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/shakhawathossain/crawler-parser/events"
 	"github.com/shakhawathossain/crawler-parser/internal/canonicalizer"
+	"github.com/shakhawathossain/crawler-parser/internal/kafkaconn"
 	"github.com/shakhawathossain/crawler-parser/internal/parser"
+	"github.com/shakhawathossain/crawler-parser/internal/redisconn"
 	"github.com/shakhawathossain/crawler-parser/internal/store"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -61,9 +63,9 @@ func main() {
 	go func() { <-sigs; log.Println("shutting down"); cancel() }()
 
 	// ── Redis for dedup ───────────────────────────────────────────────────────
-	rdb := redis.NewClient(&redis.Options{Addr: *redisAddr})
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Fatalf("redis ping: %v", err)
+	rdb, err := redisconn.New(ctx, *redisAddr)
+	if err != nil {
+		log.Fatalf("redis: %v", err)
 	}
 	defer rdb.Close()
 
@@ -75,14 +77,9 @@ func main() {
 	defer meta.Close()
 
 	// ── Kafka consumer + producer ─────────────────────────────────────────────
-	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(*kafkaBroker),
-		kgo.ConsumerGroup(consumerGroup),
-		kgo.ConsumeTopics(events.TopicCrawled),
-		kgo.ProducerBatchCompression(kgo.SnappyCompression()),
-	)
+	cl, err := kafkaconn.New(*kafkaBroker, consumerGroup)
 	if err != nil {
-		log.Fatalf("kafka client: %v", err)
+		log.Fatalf("kafka: %v", err)
 	}
 	defer cl.Close()
 
