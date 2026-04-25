@@ -3,16 +3,15 @@ package kafkaconn
 import (
 	"fmt"
 
-	"github.com/hossainshakhawat/crawler-parser/events"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 // New creates a Kafka client configured as a consumer-producer for the crawler parser.
-func New(broker, group string) (*kgo.Client, error) {
+func New(broker, group, consumeTopic string) (*kgo.Client, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(broker),
 		kgo.ConsumerGroup(group),
-		kgo.ConsumeTopics(events.TopicCrawled),
+		kgo.ConsumeTopics(consumeTopic),
 		kgo.ProducerBatchCompression(kgo.SnappyCompression()),
 	)
 	if err != nil {

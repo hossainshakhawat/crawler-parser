@@ -34,11 +34,13 @@ const (
 )
 
 type config struct {
-	kafkaBroker string
-	redisAddr   string
-	dsn         string
-	maxDepth    int
-	numWorkers  int
+	kafkaBroker     string
+	redisAddr       string
+	dsn             string
+	maxDepth        int
+	numWorkers      int
+	topicCrawled    string
+	topicDiscovered string
 }
 
 func loadConfig() config {
@@ -56,11 +58,13 @@ func loadConfig() config {
 	}
 
 	return config{
-		kafkaBroker: viper.GetString("kafka_broker"),
-		redisAddr:   viper.GetString("redis_addr"),
-		dsn:         viper.GetString("dsn"),
-		maxDepth:    viper.GetInt("max_depth"),
-		numWorkers:  viper.GetInt("workers"),
+		kafkaBroker:     viper.GetString("kafka_broker"),
+		redisAddr:       viper.GetString("redis_addr"),
+		dsn:             viper.GetString("dsn"),
+		maxDepth:        viper.GetInt("max_depth"),
+		numWorkers:      viper.GetInt("workers"),
+		topicCrawled:    viper.GetString("topic_crawled"),
+		topicDiscovered: viper.GetString("topic_discovered"),
 	}
 }
 
@@ -92,7 +96,7 @@ func main() {
 	}
 	defer metaStore.Close()
 
-	kafkaClient, err := kafkaconn.New(cfg.kafkaBroker, consumerGroup)
+	kafkaClient, err := kafkaconn.New(cfg.kafkaBroker, consumerGroup, cfg.topicCrawled)
 	if err != nil {
 		log.Fatalf("kafka: %v", err)
 	}
@@ -101,7 +105,7 @@ func main() {
 	log.Printf("crawler-parser started: group=%s max-depth=%d workers=%d",
 		consumerGroup, cfg.maxDepth, cfg.numWorkers)
 
-	run(ctx, kafkaClient, redisClient, metaStore, cfg.maxDepth, cfg.numWorkers)
+	run(ctx, kafkaClient, redisClient, metaStore, cfg.maxDepth, cfg.numWorkers, cfg.topicDiscovered)
 }
 
 func run(
@@ -111,6 +115,7 @@ func run(
 	metaStore *store.MetadataStore,
 	maxDepth int,
 	numWorkers int,
+	topicDiscovered string,
 ) {
 	semaphore := make(chan struct{}, numWorkers)
 
@@ -137,7 +142,7 @@ func run(
 			wg.Add(1)
 			go func(page events.CrawledPage) {
 				defer func() { <-semaphore; wg.Done() }()
-				processPage(ctx, page, kafkaClient, redisClient, metaStore, maxDepth)
+				processPage(ctx, page, kafkaClient, redisClient, metaStore, maxDepth, topicDiscovered)
 			}(page)
 		})
 		wg.Wait()

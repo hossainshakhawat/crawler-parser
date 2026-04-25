@@ -45,15 +45,17 @@ CREATE TABLE IF NOT EXISTS url_metadata (
 
 ## Configuration
 
-All options are passed as command-line flags.
+Configuration is read from `config.yml` in the working directory. All keys can be overridden by environment variables with the `PARSER_` prefix (e.g. `PARSER_KAFKA_BROKER`).
 
-| Flag          | Default                                              | Description                                                   |
-|---------------|------------------------------------------------------|---------------------------------------------------------------|
-| `-kafka`      | `localhost:9092`                                     | Kafka broker address                                          |
-| `-redis`      | `localhost:6379`                                     | Redis address for link deduplication                          |
-| `-dsn`        | `root:@tcp(127.0.0.1:3306)/webcrawler?parseTime=true`| MySQL Data Source Name                                        |
-| `-max-depth`  | `3`                                                  | Maximum crawl depth. Links found at this depth are not republished |
-| `-workers`    | `8`                                                  | Number of parallel parse goroutines                           |
+| Key                | Default                                                | Env var                    | Description                                                        |
+|--------------------|--------------------------------------------------------|----------------------------|--------------------------------------------------------------------|  
+| `kafka_broker`     | `localhost:9092`                                       | `PARSER_KAFKA_BROKER`      | Kafka broker address                                               |
+| `redis_addr`       | `localhost:6379`                                       | `PARSER_REDIS_ADDR`        | Redis address for link deduplication                               |
+| `dsn`              | `root:@tcp(127.0.0.1:3306)/webcrawler?parseTime=true`  | `PARSER_DSN`               | MySQL Data Source Name                                             |
+| `max_depth`        | `3`                                                    | `PARSER_MAX_DEPTH`         | Maximum crawl depth. Links found at this depth are not republished |
+| `workers`          | `8`                                                    | `PARSER_WORKERS`           | Number of parallel parse goroutines                                |
+| `topic_crawled`    | `crawled-urls`                                         | `PARSER_TOPIC_CRAWLED`     | Kafka topic to consume crawled pages from                          |
+| `topic_discovered` | `discovered-urls`                                      | `PARSER_TOPIC_DISCOVERED`  | Kafka topic to publish newly discovered links to                   |
 
 ## Running
 
@@ -61,20 +63,25 @@ All options are passed as command-line flags.
 # Build
 go build -o crawler-parser ./...
 
-# Run with defaults
+# Run with defaults (reads config.yml in the working directory)
 ./crawler-parser
 
-# Run with custom settings
-./crawler-parser \
-  -kafka broker:9092 \
-  -redis redis:6379 \
-  -dsn "user:pass@tcp(mysql:3306)/webcrawler?parseTime=true" \
-  -max-depth 5 \
-  -workers 16
+# Override individual values with environment variables
+PARSER_KAFKA_BROKER=broker:9092 \
+PARSER_REDIS_ADDR=redis:6379 \
+PARSER_DSN="user:pass@tcp(mysql:3306)/webcrawler?parseTime=true" \
+PARSER_MAX_DEPTH=5 \
+PARSER_WORKERS=16 \
+./crawler-parser
+
+# Use custom Kafka topics
+PARSER_TOPIC_CRAWLED=my-pages \
+PARSER_TOPIC_DISCOVERED=my-urls \
+./crawler-parser
 
 # Run multiple instances for higher throughput (same consumer group)
-./crawler-parser -kafka broker:9092 &
-./crawler-parser -kafka broker:9092 &
+./crawler-parser &
+./crawler-parser &
 ```
 
 Shut down gracefully with `SIGINT` or `SIGTERM`. The parser commits Kafka offsets before exiting.
@@ -112,7 +119,9 @@ For every `CrawledPage` event consumed from `crawled-urls`:
 
 ## Kafka topics
 
-| Topic             | Direction | Message type    |
-|-------------------|-----------|-----------------|
-| `crawled-urls`    | Consume   | `CrawledPage`   |
-| `discovered-urls` | Produce   | `DiscoveredURL` |
+Topic names are configurable via `config.yml` or environment variables (see Configuration above).
+
+| Config key         | Default           | Direction | Message type    |
+|--------------------|-------------------|-----------|-----------------|
+| `topic_crawled`    | `crawled-urls`    | Consume   | `CrawledPage`   |
+| `topic_discovered` | `discovered-urls` | Produce   | `DiscoveredURL` |

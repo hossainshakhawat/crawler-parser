@@ -24,6 +24,7 @@ func processPage(
 	redisClient *redis.Client,
 	metaStore *store.MetadataStore,
 	maxDepth int,
+	topicDiscovered string,
 ) {
 	// ① Decompress body
 	body, err := gzipDecompress(page.Body)
@@ -82,7 +83,7 @@ func processPage(
 			continue
 		}
 		kafkaRecord := &kgo.Record{
-			Topic: events.TopicDiscovered,
+			Topic: topicDiscovered,
 			Key:   []byte(norm),
 			Value: payload,
 		}
