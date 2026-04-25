@@ -1,0 +1,12 @@
+# crawler-parser configuration
+# All values can be overridden by environment variables prefixed with PARSER_
+# e.g. PARSER_KAFKA_BROKER, PARSER_REDIS_ADDR, PARSER_DSN,
+#      PARSER_MAX_DEPTH, PARSER_WORKERS
+# Flags (e.g. -kafka, -dsn) take the highest precedence and override both
+# environment variables and this file.
+
+kafka_broker: "localhost:9092"
+redis_addr:   "localhost:6379"
+dsn:          "root:@tcp(127.0.0.1:3306)/webcrawler?parseTime=true"
+max_depth:    3
+workers:      8
