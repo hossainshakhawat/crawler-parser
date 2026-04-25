@@ -20,14 +20,14 @@ const (
 )
 
 type URLMeta struct {
-	URLHash      string
-	CanonicalURL string
-	Host         string
-	Status       Status
-	HTTPStatus   int
+	URLHash       string
+	CanonicalURL  string
+	Host          string
+	Status        Status
+	HTTPStatus    int
 	LastCrawledAt time.Time
-	ContentHash  string
-	Title        string
+	ContentHash   string
+	Title         string
 }
 
 type MetadataStore struct {
